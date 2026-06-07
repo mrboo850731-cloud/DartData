@@ -3,3 +3,4 @@ auto/output/
 __pycache__/
 *.pyc
 *.log
+RUNBOOK.md
