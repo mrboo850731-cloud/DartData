@@ -35,6 +35,8 @@ EP_MAJORSTOCK = f"{API_BASE}/majorstock.json"  # 대량보유 상황보고
 # DS003 재무정보 (다중회사 API — 100개 묶음 배치). FilingHub에서 이식.
 EP_MULTI_ACCOUNT = f"{API_BASE}/fnlttMultiAcnt.json"   # 다중회사 주요계정
 EP_COMPANY_INDEX = f"{API_BASE}/fnlttCmpnyIndx.json"   # 다중회사 주요 재무지표
+EP_SINGLE_ACCOUNT_ALL = f"{API_BASE}/fnlttSinglAcntAll.json"  # 단일회사 전체재무제표(전 계정)
+FS_DIV = ["CFS", "OFS"]                                # 연결·별도 (전체재무제표는 단건 호출)
 MULTI_BATCH = 100                                       # 다중회사 1콜 최대 회사 수
 REPRT_NM = {"11011": "사업보고서", "11012": "반기보고서",
             "11013": "1분기보고서", "11014": "3분기보고서"}

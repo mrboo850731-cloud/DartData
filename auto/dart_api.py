@@ -92,6 +92,20 @@ def get_multi_account(corp_codes, bsns_year: str, reprt_code: str) -> list[dict]
     return data.get("list", [])
 
 
+def get_single_account_all(corp_code: str, bsns_year: str, reprt_code: str,
+                           fs_div: str) -> list[dict]:
+    """단일회사 전체재무제표(fnlttSinglAcntAll) — 한 회사·연도·보고서·연결구분의 전 계정.
+
+    fs_div: CFS(연결)/OFS(별도). 배치 불가(단건). 013이면 빈 list.
+    각 행: rcept_no·sj_div(BS/IS/CIS/CF/SCE)·sj_nm·account_id·account_nm·
+           thstrm/frmtrm/bfefrmtrm_amount·ord·currency.
+    """
+    data = _get(config.EP_SINGLE_ACCOUNT_ALL, {
+        "corp_code": corp_code, "bsns_year": bsns_year,
+        "reprt_code": reprt_code, "fs_div": fs_div})
+    return data.get("list", [])
+
+
 def get_company_index(corp_codes, bsns_year: str, reprt_code: str,
                       idx_cl_code: str) -> list[dict]:
     """다중회사 주요 재무지표(fnlttCmpnyIndx) — 최대 100개사. idx_cl_code 필수.
