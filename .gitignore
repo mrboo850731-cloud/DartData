@@ -1,0 +1,5 @@
+auto/.env
+auto/output/
+__pycache__/
+*.pyc
+*.log
