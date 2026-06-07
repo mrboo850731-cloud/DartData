@@ -18,6 +18,7 @@ load_dotenv(ROOT / ".env")
 DART_API_KEY = os.getenv("DART_API_KEY", "").strip()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+HEALTHCHECK_URL = os.getenv("HEALTHCHECK_URL", "").strip()   # healthchecks.io ping (서버 .env에만)
 
 OUTPUT_DIR = ROOT / "output"
 

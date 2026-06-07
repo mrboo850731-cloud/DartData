@@ -24,6 +24,7 @@ try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
     pass
+import requests
 import config
 import dart_api
 import registry
@@ -91,6 +92,14 @@ def run_events(lookback: int):
 
     _batch_upsert("events", rows, "endpoint,corp_code,period")
     log(f"events upsert {len(rows)}건 (데이터콜 {calls})")
+
+    # 성공 시 healthchecks.io ping (멈추면 이메일 알림). URL은 서버 .env 에만.
+    if config.HEALTHCHECK_URL:
+        try:
+            requests.get(config.HEALTHCHECK_URL, timeout=10)
+            log("healthcheck ping ✓")
+        except Exception:
+            pass
 
 
 # ── 재무 (일 1회) ──────────────────────────────────────────────
