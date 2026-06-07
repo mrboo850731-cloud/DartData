@@ -43,29 +43,70 @@ def _batch_upsert(table, rows, on_conflict, n=200):
         sb.upsert(table, rows[i:i + n], on_conflict)
 
 
-# ── 이벤트 (15분) ──────────────────────────────────────────────
+# ── 이벤트 (15분) — 증분: 새 공시(rcept_no)만 처리 ──────────────
+def _state_file():
+    config.OUTPUT_DIR.mkdir(exist_ok=True)
+    return config.OUTPUT_DIR / "last_rcept.txt"
+
+
+def _load_last_rcept():
+    f = _state_file()
+    return f.read_text().strip() if f.exists() else ""
+
+
+def _enum_recent(bgn, end):
+    """list.json B/C/D 최근 제출(rcept_no 포함) → 필링 리스트 + 열거콜수. (창<3개월=청킹불요)"""
+    out, calls = [], 0
+    for ty in ("B", "C", "D"):
+        page = 1
+        while True:
+            try:
+                data = dart_api.list_disclosures(bgn, end, pblntf_ty=ty, page_no=page, page_count=100)
+            except Exception:
+                break
+            calls += 1
+            if data.get("status") == "013":
+                break
+            for it in data.get("list", []):
+                if it.get("corp_code"):
+                    out.append({"corp": it["corp_code"], "rnm": (it.get("report_nm") or "").strip(),
+                                "rcpt": str(it.get("rcept_no", "")), "ty": ty,
+                                "name": it.get("corp_name", ""), "cls": it.get("corp_cls", ""),
+                                "stock": (it.get("stock_code") or "").strip()})
+            tp = int(data.get("total_page", 1) or 1)
+            if page >= tp:
+                break
+            page += 1
+            time.sleep(config.REQUEST_SLEEP)
+    return out, calls
+
+
 def run_events(lookback: int):
     today = datetime.now(KST).date()
     yr = str(today.year)
     bgn_y, end_y = f"{yr}0101", f"{yr}1231"
-    bgn_recent = today - timedelta(days=lookback)
+    bgn = (today - timedelta(days=lookback)).strftime("%Y%m%d")
+    end = today.strftime("%Y%m%d")
 
-    # 1) 최근 활동(회사×항목) 열거 → 매칭
+    filings, enum_calls = _enum_recent(bgn, end)
+    last = _load_last_rcept()
+    new = [f for f in filings if f["rcpt"] > last]                 # 직전 max 이후 신규만
+    cur_max = max((f["rcpt"] for f in filings), default=last)
+    log(f"최근 {lookback}일 공시 {len(filings)} · 신규 {len(new)} (직전 max {last or '없음'})")
+
+    # 신규 공시 → (회사, 엔드포인트) 매칭 (구조화 API 없는 유형 skip)
     work, meta = {}, {}
-    for ty in ("B", "C", "D"):
-        corps, _rpt, pairs, _f, _c = enm.enum_type(ty, bgn_recent, today)
-        meta.update(corps)
-        gname, matcher, table, needs_range = registry.GROUP[ty]
-        for corp, report_nm in pairs:
-            ep = matcher(report_nm)
-            if not ep:
-                continue
-            if (corp, ep) not in work:
-                label = next((l for (e, l, k) in table if e == ep), ep)
-                work[(corp, ep)] = {"grp": gname, "label": label, "needs_range": needs_range}
-    log(f"최근 {lookback}일 활동: {len(work)} (회사×항목)")
+    for f in new:
+        meta[f["corp"]] = {"name": f["name"], "cls": f["cls"], "stock": f["stock"]}
+        gname, matcher, table, needs_range = registry.GROUP[f["ty"]]
+        ep = matcher(f["rnm"])
+        if not ep:
+            continue
+        if (f["corp"], ep) not in work:
+            label = next((l for (e, l, k) in table if e == ep), ep)
+            work[(f["corp"], ep)] = {"grp": gname, "label": label, "needs_range": needs_range}
 
-    # 2) 각 (회사, 항목)의 현재연도 전체 재수집 → events 행 (period=연도/snapshot)
+    # 해당 회사의 현재연도 전체 재수집 → events 행 (period=연도/snapshot)
     rows, calls = [], 0
     for (corp, ep), info in work.items():
         params = {"corp_code": corp}
@@ -91,9 +132,11 @@ def run_events(lookback: int):
         time.sleep(config.REQUEST_SLEEP)
 
     _batch_upsert("events", rows, "endpoint,corp_code,period")
-    log(f"events upsert {len(rows)}건 (데이터콜 {calls})")
+    if cur_max and cur_max > last:
+        _state_file().write_text(cur_max)                          # 진행 마커 저장
+    log(f"events upsert {len(rows)}건 (열거 {enum_calls} + 데이터 {calls}콜)")
 
-    # 성공 시 healthchecks.io ping (멈추면 이메일 알림). URL은 서버 .env 에만.
+    # 성공 시 healthchecks.io ping (공시 0건이어도 매번 — 심장박동). URL은 서버 .env에만.
     if config.HEALTHCHECK_URL:
         try:
             requests.get(config.HEALTHCHECK_URL, timeout=10)
