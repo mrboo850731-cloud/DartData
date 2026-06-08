@@ -62,7 +62,7 @@ def _fetch_worklist(years):
     while True:
         r = requests.get(base, headers={**_H, "Range": f"{off}-{off + page - 1}"},
                          params={"select": "corp_code,corp_name,stock,year,reprt,reprt_nm,stlm_dt",
-                                 "year": yf, "order": "year.asc,corp_code.asc"}, timeout=60)
+                                 "year": yf, "order": "year.desc,corp_code.asc"}, timeout=60)  # 최신 연도부터
         b = r.json()
         out.extend(b)
         if len(b) < page:
