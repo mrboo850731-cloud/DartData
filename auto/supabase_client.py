@@ -26,7 +26,9 @@ def upsert(table: str, rows: list, on_conflict: str):
         return
     url = f"{config.SUPABASE_URL}/rest/v1/{table}?on_conflict={on_conflict}"
     last = None
-    for attempt in range(4):
+    # 5xx(503/525 등 Cloudflare·플랫폼 일시장애)·네트워크 오류는 재시도. 긴 백필 견고화:
+    # 6회 시도 + 백오프 1·2·4·8·16초(최대 30) ≈ ~30초 창 → 순간 깜빡임 대부분 흡수.
+    for attempt in range(6):
         try:
             r = requests.post(url, headers=_headers(), json=rows, timeout=120)
             if r.status_code in (200, 201, 204):
@@ -37,8 +39,8 @@ def upsert(table: str, rows: list, on_conflict: str):
             last = f"{r.status_code}: {r.text[:200]}"
         except requests.exceptions.RequestException as e:
             last = str(e)
-        if attempt < 3:
-            time.sleep(2 ** attempt)
+        if attempt < 5:
+            time.sleep(min(2 ** attempt, 30))
     raise RuntimeError(f"{table} 업서트 실패(재시도 초과): {last}")
 
 
