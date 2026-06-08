@@ -167,6 +167,8 @@ def main():
             cur = _currency(items, cur)
             if not rcpt:
                 rcpt = items[0].get("rcept_no", "")
+        if stopped:                       # 한도(020)/상한 도달 → 부분 수집된 현재 회사는 '버리고' 중단
+            break                         # (DB에 안 넣음) → 내일 같은 명령 재실행 시 그 회사부터 통째 재수집 = 반쪽 행 0, 정확한 resume
         if stmt:
             row = {"corp_code": corp, "corp_name": w.get("corp_name", ""), "stock": w.get("stock", ""),
                    "year": yr, "reprt": reprt, "reprt_nm": w.get("reprt_nm", ""),
@@ -181,8 +183,6 @@ def main():
                     buf = []
         if i % 200 == 0:
             log(f"  {i}/{len(todo)} (콜 {calls}, 저장 {built})")
-        if stopped:
-            break
         time.sleep(config.REQUEST_SLEEP)
 
     if not args.measure and buf:
