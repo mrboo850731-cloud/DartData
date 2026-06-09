@@ -44,6 +44,26 @@ def upsert(table: str, rows: list, on_conflict: str):
     raise RuntimeError(f"{table} 업서트 실패(재시도 초과): {last}")
 
 
+def get_all(path: str, page: int = 1000, timeout: int = 60) -> list:
+    """service_role GET — Range 페이지네이션으로 전 행 수집(읽기/대조용).
+    path 예: 'companies?select=corp_code'. 빈 페이지가 올 때까지 받는다(누락 방지)."""
+    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_ROLE_KEY:
+        raise RuntimeError("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 미설정 — auto/.env 확인")
+    url = f"{config.SUPABASE_URL}/rest/v1/{path}"
+    k = config.SUPABASE_SERVICE_ROLE_KEY
+    base = {"apikey": k, "Authorization": f"Bearer {k}"}  # GET 전용(쓰기 Prefer 미포함)
+    out, off = [], 0
+    while True:
+        h = dict(base); h["Range-Unit"] = "items"; h["Range"] = f"{off}-{off + page - 1}"
+        r = requests.get(url, headers=h, timeout=timeout)
+        r.raise_for_status()
+        j = r.json()
+        if not isinstance(j, list) or not j:
+            break
+        out += j; off += len(j)
+    return out
+
+
 def count(table: str) -> int:
     """행 수 확인(검증용)."""
     url = f"{config.SUPABASE_URL}/rest/v1/{table}?select=*"
