@@ -209,6 +209,39 @@ def run_financials():
         rows = [r for r in period.values() if r["acct"]["CFS"] or r["acct"]["OFS"] or r["idx"]]
         _batch_upsert("financials", rows, "corp_code,year,reprt", 500)
         log(f"  {yr} {config.REPRT_NM[reprt]}: {len(rows)}건 upsert (누적 {calls}콜)")
+    _reconcile_companies(codes)   # 재무 들어온 회사는 회사개황(종목명)도 즉시 확보(누락 방지)
+
+
+def _reconcile_companies(codes):
+    """이번 재무 갱신 대상(codes) 중 companies(회사개황) 없는 회사를 즉시 보완.
+    회사개황 잡은 주 1회(일요일)뿐이라, 신규 제출자의 종목명 누락(최대 6일)을 매 재무런마다 메운다.
+    대개 누락 0~소수 → companies 코드 조회 + 소수 회사개황 콜로 저비용."""
+    try:
+        have = {c["corp_code"] for c in sb.get_all("companies?select=corp_code")}
+    except Exception as e:
+        log(f"회사개황 보완 skip(companies 조회 실패): {e}")
+        return
+    missing = [c for c in codes if c not in have]
+    if not missing:
+        log("회사개황 보완: 누락 없음")
+        return
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    rows = []
+    for corp in missing:
+        try:
+            p = dart_api.get_company(corp)
+        except Exception:
+            p = {}
+        if p:
+            p["_fetched"] = today
+            rows.append({"corp_code": corp, "corp_name": p.get("corp_name"),
+                         "corp_name_eng": p.get("corp_name_eng"), "stock_code": p.get("stock_code"),
+                         "ceo_nm": p.get("ceo_nm"), "corp_cls": p.get("corp_cls"),
+                         "induty_code": p.get("induty_code"), "est_dt": p.get("est_dt"),
+                         "acc_mt": p.get("acc_mt"), "adres": p.get("adres"), "profile": p})
+        time.sleep(config.REQUEST_SLEEP)
+    _batch_upsert("companies", rows, "corp_code", 500)
+    log(f"회사개황 보완: {len(rows)}/{len(missing)}개사 신규 확보(종목명 포함)")
 
 
 def _blank_fin(corp, corps, yr, reprt):
