@@ -92,6 +92,16 @@ def get_multi_account(corp_codes, bsns_year: str, reprt_code: str) -> list[dict]
     return data.get("list", [])
 
 
+def get_periodic(endpoint: str, corp_code: str, bsns_year: str, reprt_code: str):
+    """DS002 정기보고서 주요정보 — 단일회사 30개 항목 공통 호출. (corp,year,reprt)
+
+    응답은 평면 `list` 또는 다중그룹 `group`(V2 보수 2개). (list, group) 튜플 반환. 013이면 둘 다 빈.
+    """
+    data = _get(f"{config.API_BASE}/{endpoint}.json", {
+        "corp_code": corp_code, "bsns_year": bsns_year, "reprt_code": reprt_code})
+    return data.get("list") or [], data.get("group") or []
+
+
 def get_single_account_all(corp_code: str, bsns_year: str, reprt_code: str,
                            fs_div: str) -> list[dict]:
     """단일회사 전체재무제표(fnlttSinglAcntAll) — 한 회사·연도·보고서·연결구분의 전 계정.

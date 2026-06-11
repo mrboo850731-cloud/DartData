@@ -45,6 +45,28 @@ REPRT_STLM = {"11013": "03-31", "11012": "06-30", "11014": "09-30", "11011": "12
 IDX_CL_CODE = {"수익성": "M210000", "안정성": "M220000",
                "성장성": "M230000", "활동성": "M240000"}  # 재무지표는 2023 3분기~만 존재
 
+# DS002 정기보고서 주요정보 — 30개 단일회사 API (전부 corp_code+bsns_year+reprt_code).
+# 응답 28개 평면 list, 2개(V2 보수)만 다중그룹. V2는 최신연도용(과거는 v1). 라이브검증 완료(2026-06-11).
+DS002_ENDPOINTS = [
+    ("stockTotqySttus", "주식의총수현황"), ("tesstkAcqsDspsSttus", "자기주식취득처분"),
+    ("alotMatter", "배당"), ("irdsSttus", "증자감자현황"),
+    ("detScritsIsuAcmslt", "채무증권발행실적"), ("entrprsBilScritsNrdmpBlce", "기업어음미상환잔액"),
+    ("srtpdPsndbtNrdmpBlce", "단기사채미상환잔액"), ("cprndNrdmpBlce", "회사채미상환잔액"),
+    ("newCaplScritsNrdmpBlce", "신종자본증권미상환잔액"), ("cndlCaplScritsNrdmpBlce", "조건부자본증권미상환잔액"),
+    ("pssrpCptalUseDtls", "공모자금사용내역"), ("prvsrpCptalUseDtls", "사모자금사용내역"),
+    ("accnutAdtorNmNdAdtOpinion", "회계감사인명칭및감사의견"), ("adtServcCnclsSttus", "감사용역체결현황"),
+    ("accnutAdtorNonAdtServcCnclsSttus", "비감사용역계약현황"), ("outcmpnyDrctrNdChangeSttus", "사외이사및변동현황"),
+    ("hyslrSttus", "최대주주현황"), ("hyslrChgSttus", "최대주주변동현황"),
+    ("mrhlSttus", "소액주주현황"), ("exctvSttus", "임원현황"), ("empSttus", "직원현황"),
+    ("unrstExctvMendngSttus", "미등기임원보수현황"),
+    ("drctrAdtAllMendngSttusGmtsckConfmAmount", "이사감사보수_주총승인금액"),
+    ("hmvAuditAllSttus", "이사감사보수_지급금액전체"),
+    ("drctrAdtAllMendngSttusMendngPymntamtTyCl", "이사감사보수_지급금액유형별"),
+    ("hmvAuditIndvdlBySttus", "개인별보수5억이상"), ("hmvAuditIndvdlBySttusV2", "개인별보수5억이상_V2"),
+    ("indvdlByPay", "개인별보수상위5인"), ("indvdlByPayV2", "개인별보수상위5인_V2"),
+    ("otrCprInvstmntSttus", "타법인출자현황"),
+]
+
 # 공시유형(pblntf_ty) — 구동축으로 쓰는 3종.
 PBLNTF_TY = {
     "B": "주요사항보고",   # → DS005 (발행결정·M&A·부도·소송 등 36개)
