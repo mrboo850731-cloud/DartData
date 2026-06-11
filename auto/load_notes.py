@@ -35,10 +35,13 @@ def log(m):
 
 
 def cat(nm):
-    m = re.search(r"[\[\-]([DU])(\d)", nm or "")
+    # 업종 변형 접두 허용: [D839005] 일반 외에 [DS…]증권·[DI…]보험·[DB…]은행 등
+    # 금융업 role은 D 뒤에 업종 문자가 끼어 기존 패턴(D+숫자)에서 전부 '기타'로 떨어져
+    # 금융업 주석이 통째로 유실됐었음(예: [DS839005] 특수관계자와의 거래). 첫 숫자가 구분자.
+    m = re.search(r"[\[\-]([DU])([A-Z]?)(\d)", nm or "")
     if not m:
         return "기타"
-    p, d = m.group(1), m.group(2)
+    p, d = m.group(1), m.group(3)
     if p == "D" and d in "23456":     # D2~D6 = 재무제표 본문(BS·IS·CIS·CF·자본변동표) = financials_full에 있음
         return "본문"
     if p == "D" and d in "78":        # D7·D8 = 주석
@@ -156,8 +159,14 @@ def build_company(cik, vrows, prerows, rolerows, labrows, ctxrows):
                 continue
             p, dim = period_dim(cid)
             facts.append({"sec": sec, "label": label, "val": v, "period": p, "dim": dim})
-        elif len(v) > 120 or "<" in v:   # 서술형 주석
-            narrative.append({"sec": note_sec(eid, tax) or "", "label": label, "html": v})
+        else:
+            # 서술형 주석. 길이 120자 게이트만 쓰면 주석 섹션의 짧은 평문 설명이 유실됨 —
+            # 실사례: LG에너지솔루션 '이자율이 1%(100bp) 변동시 …'(79자, 태그 없음)가 탈락해
+            # 민감도 변동 폭 가정이 DB에서 사라짐(환율 버전은 태그 포함이라 생존). 주석 섹션에
+            # 매핑된 텍스트는 20자 초과면 보존(코드값·'해당사항 없음' 등 잡음만 차단).
+            sec = note_sec(eid, tax)
+            if "<" in v or len(v) > 120 or (sec and len(v) > 20):
+                narrative.append({"sec": sec or "", "label": label, "html": v})
     return rdate, narrative, facts
 
 
