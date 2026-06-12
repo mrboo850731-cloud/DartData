@@ -24,6 +24,15 @@ def upsert(table: str, rows: list, on_conflict: str):
         raise RuntimeError("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 미설정 — auto/.env 확인")
     if not rows:
         return
+    # 같은 배치 내 PK(on_conflict 컬럼) 중복 제거 — 마지막 우선.
+    # ON CONFLICT는 한 명령에서 같은 행을 두 번 못 건드림 → worklist 페이지중복 등으로 dup이 끼면 500 크래시.
+    cols = [c.strip() for c in on_conflict.split(",") if c.strip()]
+    if cols:
+        dedup = {}
+        for r in rows:
+            dedup[tuple(r.get(c) for c in cols)] = r
+        if len(dedup) != len(rows):
+            rows = list(dedup.values())
     url = f"{config.SUPABASE_URL}/rest/v1/{table}?on_conflict={on_conflict}"
     last = None
     # 5xx(503/525 등 Cloudflare·플랫폼 일시장애)·네트워크 오류는 재시도. 긴 백필 견고화:
