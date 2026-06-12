@@ -179,23 +179,24 @@ def main():
             cur = _currency(items, cur)
             if not rcpt:
                 rcpt = items[0].get("rcept_no", "")
-        if stopped:                       # 한도(020)/상한 도달 → 부분 수집된 현재 회사는 '버리고' 중단
-            break                         # (DB에 안 넣음) → 내일 같은 명령 재실행 시 그 회사부터 통째 재수집 = 반쪽 행 0, 정확한 resume
-        if stmt:
-            row = {"corp_code": corp, "corp_name": w.get("corp_name", ""), "stock": w.get("stock", ""),
-                   "year": yr, "reprt": reprt, "reprt_nm": w.get("reprt_nm", ""),
-                   "stlm_dt": w.get("stlm_dt", ""), "rcept_no": rcpt, "currency": cur,
-                   "n_cfs": len(stmt.get("CFS", [])), "n_ofs": len(stmt.get("OFS", [])), "stmt": stmt}
-            built += 1
-            total_bytes += len(json.dumps(row, ensure_ascii=False).encode())
-            if not args.measure:
-                buf.append(row)
-                if len(buf) >= 200:
-                    if not _upsert_retry("financials_full", buf, "corp_code,year,reprt"):
-                        log("⚠ Supabase 장기장애 → 중단(다음 실행 시 resume)")
-                        stopped = True
-                        break
-                    buf = []
+        if stopped:                       # 한도(020)/상한/장애 도달 → 부분 수집된 현재 회사는 '버리고' 중단(정확한 resume)
+            break
+        # 전체재무제표 013(빈)이어도 마커 행 저장 → 그 회사를 done 처리.
+        # (안 하면 013 회사를 매 실행마다 재호출 → 콜 낭비 + todo가 0이 안 돼 백필 완료/DS002 시작 불가)
+        row = {"corp_code": corp, "corp_name": w.get("corp_name", ""), "stock": w.get("stock", ""),
+               "year": yr, "reprt": reprt, "reprt_nm": w.get("reprt_nm", ""),
+               "stlm_dt": w.get("stlm_dt", ""), "rcept_no": rcpt, "currency": cur,
+               "n_cfs": len(stmt.get("CFS", [])), "n_ofs": len(stmt.get("OFS", [])), "stmt": stmt}
+        built += 1
+        total_bytes += len(json.dumps(row, ensure_ascii=False).encode())
+        if not args.measure:
+            buf.append(row)
+            if len(buf) >= 200:
+                if not _upsert_retry("financials_full", buf, "corp_code,year,reprt"):
+                    log("⚠ Supabase 장기장애 → 중단(다음 실행 시 resume)")
+                    stopped = True
+                    break
+                buf = []
         if i % 200 == 0:
             log(f"  {i}/{len(todo)} (콜 {calls}, 저장 {built})")
         time.sleep(config.REQUEST_SLEEP)

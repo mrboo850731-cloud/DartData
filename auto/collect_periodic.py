@@ -143,8 +143,7 @@ def main():
                 empties += 1
         if stopped:                       # 부분 수집된 현재 보고서는 버림 → 재실행 시 통째 재수집
             break
-        if not data:
-            continue
+        # 모든 항목 013(빈)이어도 마커 저장 → done 처리 (안 하면 매 실행 재호출·todo가 0이 안 됨)
         row = {"corp_code": corp, "corp_name": w.get("corp_name", ""), "stock": w.get("stock", ""),
                "year": yr, "reprt": reprt, "reprt_nm": w.get("reprt_nm", ""),
                "n_topics": len(data), "n_rows": nrows, "data": data}
