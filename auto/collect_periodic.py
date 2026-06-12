@@ -34,6 +34,18 @@ def log(m):
     print(f"[{datetime.now(KST):%m-%d %H:%M:%S}] {m}", flush=True)
 
 
+def _upsert_retry(table, rows, conflict, tries=40, wait=45):
+    """Supabase 일시장애(522/5xx/DNS 등) 견딤: 실패 시 대기·재시도(최대 ~30분). 끝내 실패면 False(중단·resume)."""
+    for k in range(tries):
+        try:
+            sb.upsert(table, rows, conflict)
+            return True
+        except Exception as e:
+            log(f"⚠ 업서트 실패 {k + 1}/{tries} ({str(e)[:90]}) — {wait}s 후 재시도")
+            time.sleep(wait)
+    return False
+
+
 _H = {"apikey": config.SUPABASE_SERVICE_ROLE_KEY,
       "Authorization": f"Bearer {config.SUPABASE_SERVICE_ROLE_KEY}"}
 
@@ -144,14 +156,17 @@ def main():
             buf.append(row)
             buf_bytes += b
             if buf_bytes > 3_000_000 or len(buf) >= 100:
-                sb.upsert("periodic_info", buf, "corp_code,year,reprt")
+                if not _upsert_retry("periodic_info", buf, "corp_code,year,reprt"):
+                    log("⚠ Supabase 장기장애 → 중단(다음 실행 시 resume)")
+                    stopped = True
+                    break
                 buf, buf_bytes = [], 0
         if i % 100 == 0:
             log(f"  {i}/{len(todo)} (콜 {calls}, 저장 {built})")
         time.sleep(config.REQUEST_SLEEP)
 
     if not a.measure and buf:
-        sb.upsert("periodic_info", buf, "corp_code,year,reprt")
+        _upsert_retry("periodic_info", buf, "corp_code,year,reprt")
 
     log(f"=== {'측정' if a.measure else '수집'} 종료 ({time.time() - t0:.0f}s) ===")
     log(f"콜 {calls} · 보고서 {built} · 빈항목(013) {empties} · 총행 {total_rows:,}")
