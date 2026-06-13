@@ -67,25 +67,36 @@ def _fetch_worklist(years):
 
 
 def _fetch_done(years):
+    """이미 받은 periodic_info (corp,year,reprt) 집합(resume).
+    연도별 조회(작은 offset=빠름)+유일정렬+페이지 재시도. 끝내 못 받으면 raise(중단).
+    (정렬없는 전체 offset 페이지네이션이 느려 끊기면 done 누락→끝난 보고서 30콜 재호출 낭비)"""
     base = config.SUPABASE_URL + "/rest/v1/periodic_info"
-    yf = "in.(" + ",".join(years) + ")"
-    done, off, page = set(), 0, 1000
-    while True:
-        try:
-            r = requests.get(base, headers={**_H, "Range": f"{off}-{off + page - 1}"},
-                             params={"select": "corp_code,year,reprt", "year": yf}, timeout=60)
-            if r.status_code >= 400:
+    done = set()
+    for y in years:
+        off = 0
+        while True:
+            b = None
+            for _ in range(6):
+                try:
+                    r = requests.get(base, headers={**_H, "Range": f"{off}-{off + 999}"},
+                                     params={"select": "corp_code,year,reprt", "year": f"eq.{y}",
+                                             "order": "corp_code.asc,reprt.asc"}, timeout=90)
+                    if r.status_code in (200, 206):
+                        b = r.json()
+                        break
+                    if r.status_code == 416:        # 범위초과 = 더 없음
+                        b = []
+                        break
+                except Exception:
+                    pass
+                time.sleep(5)
+            if not isinstance(b, list):
+                raise RuntimeError(f"done-set({y}) 조회 실패 — 중단(불완전 done으로 재호출 방지, 다음 실행 재시도)")
+            for x in b:
+                done.add((x["corp_code"], str(x["year"]), x["reprt"]))
+            if len(b) < 1000:
                 break
-            b = r.json()
-        except Exception:
-            break
-        if not isinstance(b, list):
-            break
-        for x in b:
-            done.add((x["corp_code"], str(x["year"]), x["reprt"]))
-        if len(b) < page:
-            break
-        off += page
+            off += 1000
     return done
 
 
