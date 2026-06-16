@@ -222,6 +222,7 @@ def main():
         log(f"행당 평균: 계정 {ai:.0f}개 · JSON {ab/1024:.1f} KB")
         for nm, n in (("2026", 2931), ("2023~2026", 37355), ("전체 2015~2026", 96889)):
             log(f"  → {nm}: {n:,}행 ≈ {ab*n/1024/1024:.0f} MB 저장, ~{n*2:,}콜")
+    print(f"CALLS={calls}", flush=True)   # 래퍼 파싱용 ASCII 앵커: DS002 예산 = 일일백필예산 − 이 값
 
 
 if __name__ == "__main__":
