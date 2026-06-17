@@ -57,7 +57,10 @@ def _fetch_worklist(years):
     while True:
         r = requests.get(base, headers={**_H, "Range": f"{off}-{off + page - 1}"},
                          params={"select": "corp_code,corp_name,stock,year,reprt,reprt_nm",
-                                 "year": yf, "order": "year.desc,corp_code.asc,reprt.asc"}, timeout=60)  # 유일정렬(페이지중복 방지)
+                                 # 보고서종류 우선(11011 사업>11012 반기>11013 1Q>11014 3Q) → 연도 최신 → corp.
+                                 # 직원·배당·주주 등 비재무 정보는 사업·반기에만 공시 → '모든 회사의 최신 사업보고서'를
+                                 # 먼저 채워 개요 탭 커버리지를 최대한 빨리 끌어올린다(예산은 동일, 순서만 재배치).
+                                 "year": yf, "order": "reprt.asc,year.desc,corp_code.asc"}, timeout=60)  # 유일정렬(페이지중복 방지)
         b = r.json()
         out.extend(b)
         if len(b) < page:
