@@ -16,6 +16,7 @@ PROJECT_ROOT = ROOT.parent
 load_dotenv(ROOT / ".env")
 
 DART_API_KEY = os.getenv("DART_API_KEY", "").strip()
+DART_API_KEY_2 = os.getenv("DART_API_KEY_2", "").strip()   # 둘째 키(선택) — 첫 키 일한도 소진 시 롤오버용(별개 40k 예산)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 HEALTHCHECK_URL = os.getenv("HEALTHCHECK_URL", "").strip()   # healthchecks.io ping (서버 .env에만)

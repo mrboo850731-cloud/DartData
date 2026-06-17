@@ -107,7 +107,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--years", required=True, help='"2026" 또는 "2023-2026"')
     ap.add_argument("--sample", type=int, default=0)
-    ap.add_argument("--max-calls", type=int, default=0)
+    ap.add_argument("--max-calls", type=int, default=0, help="키#1 예산(0=무제한). 소진 시 키#2로 롤오버")
+    ap.add_argument("--key2-max", type=int, default=40000, help="키#2(DART_API_KEY_2) 예산 — 롤오버 후 한도")
     ap.add_argument("--measure", action="store_true")
     a = ap.parse_args()
 
@@ -129,24 +130,55 @@ def main():
     log(f"처리대상 {len(todo):,}건 · 예상 콜 ~{len(todo) * len(config.DS002_ENDPOINTS):,}")
 
     buf, built, buf_bytes = [], 0, 0
-    calls = empties = total_rows = total_bytes = 0
+    calls = calls2 = empties = total_rows = total_bytes = 0
     stopped = False
+    # 둘째 키 롤오버: 키#1 예산(--max-calls) 소진 또는 020 시 키#2(DART_API_KEY_2)로 전환해 이어감.
+    # dart_api는 매 호출 config.DART_API_KEY를 읽으므로 값만 바꾸면 즉시 전환. 키가 같거나 미설정이면 단일키.
+    KEY2 = config.DART_API_KEY_2
+    ROLLOVER = bool(KEY2 and KEY2 != config.DART_API_KEY)
+    on_key2 = False
+    if ROLLOVER:
+        log(f"롤오버 활성 — 키#1 {a.max_calls or '무제한'}콜 → 키#2 {a.key2_max}콜")
     for i, w in enumerate(todo, 1):
         corp, yr, reprt = w["corp_code"], str(w["year"]), w["reprt"]
         data, nrows = {}, 0
         for ep, _label in config.DS002_ENDPOINTS:
-            if a.max_calls and calls >= a.max_calls:
+            if not on_key2 and a.max_calls and calls >= a.max_calls:
+                if ROLLOVER:
+                    config.DART_API_KEY = KEY2; on_key2 = True
+                    log(f"키#1 예산({a.max_calls}콜) 소진 → 키#2로 전환")
+                else:
+                    stopped = True
+                    break
+            if on_key2 and calls2 >= a.key2_max:
+                log(f"키#2 예산({a.key2_max}콜) 소진 → 중단 (재개 가능)")
                 stopped = True
                 break
             try:
                 lst, grp = dart_api.get_periodic(ep, corp, yr, reprt)
             except dart_api.DartApiError as e:
                 if "020" in str(e):
-                    log("⚠ 일일한도(020) 도달 → 중단 (재개 가능)")
-                    stopped = True
-                    break
-                lst, grp = [], []
-            calls += 1
+                    if not on_key2 and ROLLOVER:
+                        config.DART_API_KEY = KEY2; on_key2 = True
+                        log("키#1 일한도(020) → 키#2로 전환")
+                        try:
+                            lst, grp = dart_api.get_periodic(ep, corp, yr, reprt)
+                        except dart_api.DartApiError as e2:
+                            if "020" in str(e2):
+                                log("키#2도 일한도(020) → 중단 (재개 가능)")
+                                stopped = True
+                                break
+                            lst, grp = [], []
+                    else:
+                        log("⚠ 일일한도(020) 도달 → 중단 (재개 가능)")
+                        stopped = True
+                        break
+                else:
+                    lst, grp = [], []
+            if on_key2:
+                calls2 += 1
+            else:
+                calls += 1
             if lst:
                 data[ep] = lst
                 nrows += len(lst)
@@ -175,14 +207,14 @@ def main():
                     break
                 buf, buf_bytes = [], 0
         if i % 100 == 0:
-            log(f"  {i}/{len(todo)} (콜 {calls}, 저장 {built})")
+            log(f"  {i}/{len(todo)} (콜 키#1 {calls}{f'+키#2 {calls2}' if calls2 else ''}, 저장 {built})")
         time.sleep(config.REQUEST_SLEEP)
 
     if not a.measure and buf:
         _upsert_retry("periodic_info", buf, "corp_code,year,reprt")
 
     log(f"=== {'측정' if a.measure else '수집'} 종료 ({time.time() - t0:.0f}s) ===")
-    log(f"콜 {calls} · 보고서 {built} · 빈항목(013) {empties} · 총행 {total_rows:,}")
+    log(f"콜 키#1 {calls} + 키#2 {calls2} = {calls + calls2} · 보고서 {built} · 빈항목(013) {empties} · 총행 {total_rows:,}")
     if built:
         log(f"보고서당 평균: 항목데이터 {total_rows/built:.0f}행 · JSON {total_bytes/built/1024:.1f}KB · 콜 {calls/built:.0f}")
         for nm, n in (("2025~2026", 14900), ("2023~2026", 37000), ("전체2015~", 96900)):
