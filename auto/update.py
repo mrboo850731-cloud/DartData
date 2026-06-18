@@ -112,6 +112,11 @@ def _enum_recent(bgn, end):
 
 
 def run_events(lookback: int, resweep: bool = False):
+    # 재훑기는 둘째 키로 — 워커(키#1) 일일예산을 침범하지 않게. 키#2 미설정 시 키#1 폴백.
+    # (자정 직후 크론으로 돌리면 백필 rollover가 키#2에 닿기 전이라 한도 여유)
+    if resweep and config.DART_API_KEY_2:
+        config.DART_API_KEY = config.DART_API_KEY_2
+        log("재훑기: 둘째 키(키#2) 사용")
     today = datetime.now(KST).date()
     yr = str(today.year)
     bgn_y, end_y = f"{yr}0101", f"{yr}1231"
