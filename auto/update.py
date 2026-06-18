@@ -43,6 +43,36 @@ def _batch_upsert(table, rows, on_conflict, n=200):
         sb.upsert(table, rows[i:i + n], on_conflict)
 
 
+def _changed_only(table, rows):
+    """이미 저장된 것과 data가 동일한 행은 제외 — 불필요한 upsert(=updated_at 갱신=Disclo 재빌드 churn) 방지.
+    resweep(재훑기)는 대부분 '변화 없는 재확인'이라, 실제로 바뀐(또는 새) 건만 남긴다.
+    조회 실패 시 전부 통과(누락보다 중복 기록이 안전)."""
+    import json as _json
+    if not rows:
+        return rows
+    corps = sorted({r["corp_code"] for r in rows})
+    existing = {}
+    for i in range(0, len(corps), 100):
+        inlist = ",".join(corps[i:i + 100])
+        try:
+            got = sb.get_all(f"{table}?select=endpoint,corp_code,period,data"
+                             f"&corp_code=in.({inlist})&order=corp_code,endpoint,period")
+        except Exception:
+            return rows
+        for g in got:
+            existing[(g["endpoint"], g["corp_code"], str(g["period"]))] = g.get("data")
+
+    def norm(d):
+        return _json.dumps(d, sort_keys=True, ensure_ascii=False)
+
+    out = []
+    for r in rows:
+        k = (r["endpoint"], r["corp_code"], str(r["period"]))
+        if k not in existing or norm(existing[k]) != norm(r.get("data")):
+            out.append(r)
+    return out
+
+
 # ── 이벤트 (15분) — 증분: 새 공시(rcept_no)만 처리 ──────────────
 def _state_file():
     config.OUTPUT_DIR.mkdir(exist_ok=True)
@@ -81,7 +111,7 @@ def _enum_recent(bgn, end):
     return out, calls
 
 
-def run_events(lookback: int):
+def run_events(lookback: int, resweep: bool = False):
     today = datetime.now(KST).date()
     yr = str(today.year)
     bgn_y, end_y = f"{yr}0101", f"{yr}1231"
@@ -90,13 +120,17 @@ def run_events(lookback: int):
 
     filings, enum_calls = _enum_recent(bgn, end)
     last = _load_last_rcept()
-    new = [f for f in filings if f["rcpt"] > last]                 # 직전 max 이후 신규만
+    # resweep(재훑기): 마커 무시하고 창 내 '전체'를 다시 받음 — OpenDART 구조화 데이터 시차로
+    #   처음 받을 때 비어/옛값이었던 공시를 뒤늦게 보정(목록은 즉시, 표 데이터는 수시간 지연).
+    #   변화 없는 재확인이 대부분이라 write-on-change로 기록(=사이트 재빌드)은 실제 변경분만.
+    # 평소(증분): 직전 max 이후 신규만(저비용). 마커는 평소 모드만 전진.
+    target = filings if resweep else [f for f in filings if f["rcpt"] > last]
     cur_max = max((f["rcpt"] for f in filings), default=last)
-    log(f"최근 {lookback}일 공시 {len(filings)} · 신규 {len(new)} (직전 max {last or '없음'})")
+    log(f"최근 {lookback}일 공시 {len(filings)} · {'재훑기' if resweep else '신규'} {len(target)} (직전 max {last or '없음'})")
 
-    # 신규 공시 → (회사, 엔드포인트) 매칭 (구조화 API 없는 유형 skip)
+    # 대상 공시 → (회사, 엔드포인트) 매칭 (구조화 API 없는 유형 skip)
     work, meta = {}, {}
-    for f in new:
+    for f in target:
         meta[f["corp"]] = {"name": f["name"], "cls": f["cls"], "stock": f["stock"]}
         gname, matcher, table, needs_range = registry.GROUP[f["ty"]]
         ep = matcher(f["rnm"])
@@ -131,10 +165,12 @@ def run_events(lookback: int):
                      "stock": m.get("stock", ""), "cls": m.get("cls", ""), "n": n, "data": d})
         time.sleep(config.REQUEST_SLEEP)
 
+    if resweep:
+        rows = _changed_only("events", rows)                       # 실제 바뀐(또는 새) 건만 기록
     _batch_upsert("events", rows, "endpoint,corp_code,period")
-    if cur_max and cur_max > last:
+    if not resweep and cur_max and cur_max > last:                 # 마커는 평소 모드만 전진(재훑기는 무전진)
         _state_file().write_text(cur_max)                          # 진행 마커 저장
-    log(f"events upsert {len(rows)}건 (열거 {enum_calls} + 데이터 {calls}콜)")
+    log(f"events {'재훑기' if resweep else 'upsert'} {len(rows)}건 기록 (열거 {enum_calls} + 데이터 {calls}콜)")
 
     # 성공 시 healthchecks.io ping (공시 0건이어도 매번 — 심장박동). URL은 서버 .env에만.
     if config.HEALTHCHECK_URL:
@@ -277,13 +313,16 @@ def run_companies():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["events", "financials", "companies"])
-    ap.add_argument("--lookback", type=int, default=3, help="events: 최근 N일")
+    ap.add_argument("mode", choices=["events", "financials", "companies", "resweep"])
+    ap.add_argument("--lookback", type=int, default=3,
+                    help="events: 최근 N일 / resweep: 재훑기 창(일). 일일 그물=7, catch-up=넓게(예 14)")
     args = ap.parse_args()
     t0 = time.time()
     log(f"=== update {args.mode} 시작 ===")
     if args.mode == "events":
         run_events(args.lookback)
+    elif args.mode == "resweep":
+        run_events(args.lookback, resweep=True)   # 마커 무시 재훑기(시차 누락 보정) + write-on-change
     elif args.mode == "financials":
         run_financials()
     else:
