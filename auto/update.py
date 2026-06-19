@@ -73,6 +73,35 @@ def _changed_only(table, rows):
     return out
 
 
+def _changed_fin(rows):
+    """financials 전용 변경필터 — 저장본과 내용(acct·idx·currency·rcept_no)이 같으면 제외.
+    재무 워커가 매일 올해 제출자 전체를 데이터 변화와 무관하게 재upsert하면 updated_at이 들썩여
+    Disclo 증분이 매번 full로 폴백한다(2026-06-19 churn 93% 원인). 한 호출=동일 (year,reprt).
+    저장본도 동일 코드가 만든 값이라 JSON 직렬화가 일치 → 안전. 조회 실패 시 전부 통과(누락 방지)."""
+    import json as _json
+    if not rows:
+        return rows
+    yr, reprt = rows[0]["year"], rows[0]["reprt"]
+    existing = {}
+    corps = sorted({r["corp_code"] for r in rows})
+    for i in range(0, len(corps), 100):
+        inlist = ",".join(corps[i:i + 100])
+        try:
+            got = sb.get_all(f"financials?select=corp_code,acct,idx,currency,rcept_no"
+                             f"&year=eq.{yr}&reprt=eq.{reprt}&corp_code=in.({inlist})&order=corp_code")
+        except Exception:
+            return rows
+        for g in got:
+            existing[g["corp_code"]] = g
+
+    def fnorm(d):
+        return _json.dumps([d.get("acct"), d.get("idx"), d.get("currency"), d.get("rcept_no")],
+                           sort_keys=True, ensure_ascii=False)
+
+    return [r for r in rows
+            if r["corp_code"] not in existing or fnorm(existing[r["corp_code"]]) != fnorm(r)]
+
+
 # ── 이벤트 (15분) — 증분: 새 공시(rcept_no)만 처리 ──────────────
 def _state_file():
     config.OUTPUT_DIR.mkdir(exist_ok=True)
@@ -248,8 +277,10 @@ def run_financials():
                     rec["idx"].setdefault(cat, {})[inm] = val
             time.sleep(config.REQUEST_SLEEP)
         rows = [r for r in period.values() if r["acct"]["CFS"] or r["acct"]["OFS"] or r["idx"]]
+        fetched = len(rows)
+        rows = _changed_fin(rows)   # 변경분만 upsert — updated_at churn 방지(Disclo 증분 빌드 복원)
         _batch_upsert("financials", rows, "corp_code,year,reprt", 500)
-        log(f"  {yr} {config.REPRT_NM[reprt]}: {len(rows)}건 upsert (누적 {calls}콜)")
+        log(f"  {yr} {config.REPRT_NM[reprt]}: {len(rows)}/{fetched}건 upsert (변경분만, 누적 {calls}콜)")
     _reconcile_companies(codes)   # 재무 들어온 회사는 회사개황(종목명)도 즉시 확보(누락 방지)
 
 
