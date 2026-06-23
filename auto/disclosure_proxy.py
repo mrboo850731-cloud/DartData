@@ -45,9 +45,11 @@ TOKEN = os.getenv("DISCLOSURE_TOKEN", "").strip()        # CF Worker와 공유�
 KEY = os.getenv("DART_API_KEY_LIVE", "").strip()         # 라이브 전용 OpenDART 키(백필 키와 분리)
 
 
-def fetch(corp, page):
-    end = datetime.now(KST).strftime("%Y%m%d")
-    params = {"crtfc_key": KEY, "corp_code": corp, "bgn_de": "19990101", "end_de": end,
+def fetch(corp, page, bgn=None, end=None):
+    today = datetime.now(KST).strftime("%Y%m%d")
+    bgn = bgn if (bgn and re.fullmatch(r"\d{8}", bgn)) else "19990101"
+    end = end if (end and re.fullmatch(r"\d{8}", end)) else today
+    params = {"crtfc_key": KEY, "corp_code": corp, "bgn_de": bgn, "end_de": end,
               "page_no": str(page), "page_count": "100", "sort": "date", "sort_mth": "desc"}
     d = requests.get(DART_LIST, params=params, timeout=10).json()
     return {
@@ -81,6 +83,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(503, {"error": "no_key"})
         q = parse_qs(u.query)
         corp = (q.get("corp", [""])[0]).strip()
+        bgn = (q.get("bgn", [""])[0]).strip()       # YYYYMMDD(선택) — 기간 시작
+        end = (q.get("end", [""])[0]).strip()       # YYYYMMDD(선택) — 기간 종료
         try:
             page = max(1, min(100, int(q.get("page", ["1"])[0])))
         except (ValueError, TypeError):
@@ -88,7 +92,7 @@ class Handler(BaseHTTPRequestHandler):
         if not re.fullmatch(r"\d{8}", corp):
             return self._send(400, {"error": "bad_corp"})
         try:
-            return self._send(200, fetch(corp, page))
+            return self._send(200, fetch(corp, page, bgn, end))
         except Exception:
             return self._send(502, {"error": "fetch_failed"})
 
