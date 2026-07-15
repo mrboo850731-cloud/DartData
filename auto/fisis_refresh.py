@@ -44,7 +44,13 @@ def log(m):
 
 
 def target_period(today=None):
-    """오늘 기준 '이미 발표됐어야 할' 최신 분기말 YYYYMM. 발표=분기말+3개월 25일~."""
+    """오늘 기준 '발표가 끝났어야 할' 최신 분기말 YYYYMM.
+
+    FISIS는 분기말+3개월의 **25~31일에 걸쳐 나눠서** 올린다(매일 17:00경). 첫날 감지하자마자
+    갱신하면 그날 올라온 업종만 받고, 다음날엔 have_period>0이라 '이미 보유'로 건너뛰어
+    나머지 업종이 다음 분기까지 누락된다. → **발표창이 닫힌 뒤(발표월 다음달 1일~)** 실행한다.
+    (지연 1주는 분기 데이터에 무의미. 발표가 늦어도 probe가 매일 확인하므로 자동 추적.)
+    """
     d = today or datetime.now(KST).date()
     for back in range(0, 5):                      # 최근 분기말부터 역순
         m = ((d.month - 1) // 3) * 3 + 1          # 이번 분기 시작월
@@ -58,15 +64,31 @@ def target_period(today=None):
         if qend_m > 12:
             qend_m -= 12
             qend_y += 1
-        # 발표 시점 = 분기말 + 3개월, 25일
-        pm, py = qend_m + 3, qend_y
-        if pm > 12:
+        # 발표창 = 분기말+3개월의 25~31일 → 그 **다음달 1일**부터 실행
+        pm, py = qend_m + 4, qend_y
+        while pm > 12:
             pm -= 12
             py += 1
-        pub = datetime(py, pm, 25, tzinfo=KST).date()
-        if d >= pub:
+        if d >= datetime(py, pm, 1, tzinfo=KST).date():
             return f"{qend_y}{qend_m:02d}"
     return None
+
+
+def _year_ago(pm):
+    return f"{int(pm[:4]) - 1}{pm[4:]}"
+
+
+def is_complete(target, ratio=0.95):
+    """target 분기가 '다 들어왔나' — 작년 같은 분기 행수의 ratio 이상이면 완결로 본다.
+
+    직전 분기와 비교하면 안 된다(Q2·Q4엔 반기표, Q4엔 연간표가 더 붙어 기준이 달라짐).
+    부분발표·중단된 갱신을 '완료'로 오인하지 않게 하는 자가복구 장치.
+    """
+    have = have_period(target)
+    base = have_period(_year_ago(target))
+    if base == 0:                                  # 비교 기준 없음 → 보유분 있으면 완결로 간주
+        return have > 0, have, base
+    return have >= base * ratio, have, base
 
 
 def have_period(pm):
@@ -328,12 +350,14 @@ def main():
     if not target:
         log("target 계산 불가 — 종료")
         return
-    n = have_period(target)
-    log(f"target={target} · DB 보유 {n:,}행 · 키 {len(fc._K['keys'])}개")
+    done, have, base = is_complete(target)
+    log(f"target={target} · 보유 {have:,}행 (작년 동분기 {base:,}) · 키 {len(fc._K['keys'])}개")
 
-    if n > 0 and not a.force:
-        log(f"이미 보유 → 종료 (0콜)")
+    if done and not a.force:
+        log(f"완결 → 종료 (0콜)")
         return
+    if have > 0:
+        log(f"부분 보유({have:,}/{base:,}, {have/base*100 if base else 0:.0f}%) → 미완으로 보고 갱신 진행")
 
     pairs = fetch_pairs(target)
     log(f"갱신 대상 쌍(회사×통계표): {len(pairs):,}")
