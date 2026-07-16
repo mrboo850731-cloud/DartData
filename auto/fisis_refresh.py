@@ -141,9 +141,46 @@ def fetch_pairs(target=None):
     return pairs
 
 
+def _corp_code_fixer(items):
+    """corp_code 복구기 → fn(item) -> corp_code.
+
+    items 의 corp_code 는 fisis_pairs 뷰의 `max(corp_code) group by finance_cd, list_no` 다.
+    **쌍 단위 집계**라 어떤 (회사,표) 한 쌍이 NULL 로 적재되면 뷰도 NULL 을 돌려주고, 그걸 그대로
+    다시 upsert 해 **NULL 이 자기 자신을 영속시킨다** — 갱신을 아무리 돌려도 영영 안 고쳐진다.
+    실제 사고: 저축은행 6사 SE010(수익성표) 이 corp_code NULL 로 굳어 Disclo 지표 탭의
+    ROE·ROA·NIM 이 통째로 비었다. 같은 회사의 다른 33개 표에는 corp_code 가 멀쩡히 있었는데도.
+
+    복구 순서: ① 같은 배치 안 같은 회사의 비-NULL 값  ② resolve_corp(회사명)
+    ⚠ 둘 다 실패하면 NULL 유지 — 외국계 '○○ 서울지점'은 DART 미등록이라 NULL 이 **정답**이다.
+    """
+    by_co = {}
+    for it in items:
+        cc = it.get("corp_code")
+        if cc:
+            by_co.setdefault(it["finance_cd"], cc)
+    cache = {}
+
+    def fix(it):
+        cc = it.get("corp_code")
+        if cc:
+            return cc
+        fcd = it["finance_cd"]
+        cc = by_co.get(fcd)
+        if cc:
+            return cc
+        if fcd not in cache:
+            cache[fcd] = fc.resolve_corp(it.get("finance_nm") or "")
+            if cache[fcd]:
+                log(f"  · corp_code 복구: {it.get('finance_nm')} → {cache[fcd]}")
+                by_co[fcd] = cache[fcd]
+        return cache[fcd]
+    return fix
+
+
 def _upsert_grid(items, target=None, full=True):
     """(회사,표) 조합들을 수집·upsert. full=True면 전체이력(CHUNKS), 아니면 최근 1년."""
     rows = 0
+    fix_cc = _corp_code_fixer(items)
     for it in items:
         if fc.keys_exhausted():
             log("  ! 키 소진 — 중단")
@@ -161,7 +198,8 @@ def _upsert_grid(items, target=None, full=True):
                 for s, e in fc.HCHUNKS:
                     agg.update(fc.parse(fc.fisis("statisticsInfoSearch", financeCd=fcd, listNo=ln,
                                                  term="H", startBaseMm=s, endBaseMm=e)))
-        buf = [{"finance_cd": fcd, "list_no": ln, "period_ym": p, "corp_code": it.get("corp_code"),
+        cc = fix_cc(it)                       # 뷰의 NULL 을 그대로 되쓰지 않는다(_corp_code_fixer 참고)
+        buf = [{"finance_cd": fcd, "list_no": ln, "period_ym": p, "corp_code": cc,
                 "finance_nm": it.get("finance_nm"), "sector": it.get("sector"), "div": it.get("div"),
                 "list_nm": it.get("list_nm"), "data": accs} for p, accs in agg.items()]
         if buf:
@@ -258,9 +296,15 @@ def backfill_new(new_co, new_tab, tabs_by_sec, pairs):
     if new_tab:
         log(f"🆕 신규 통계표 {len(new_tab)}종: " +
             ", ".join(f"{t['sector']}/{t['list_no']}" for t in new_tab[:8]))
+        # 회사 대표 pair 선정 — corp_code 가 **있는** pair 를 우선한다.
+        # 단순 덮어쓰기(마지막 pair 가 이김)면 그 회사의 마지막 표가 corp_code NULL 인 순간
+        # 신규 표 전체가 NULL 로 적재된다(= 저축은행 SE010 사고의 씨앗).
         co_by_sec = {}
         for p in pairs:
-            co_by_sec.setdefault(p.get("sector"), {})[p["finance_cd"]] = p
+            d = co_by_sec.setdefault(p.get("sector"), {})
+            cur = d.get(p["finance_cd"])
+            if cur is None or (not cur.get("corp_code") and p.get("corp_code")):
+                d[p["finance_cd"]] = p
         items = []
         for t in new_tab:
             for fcd, p in (co_by_sec.get(t["sector"]) or {}).items():
